@@ -54,5 +54,6 @@ dkms.conf
 # debug information files
 *.dwo
 
-# cmake build outpu
+# cmake build output
 build
+compile_commands.json
