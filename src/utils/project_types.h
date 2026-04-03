@@ -15,8 +15,8 @@
 typedef double float64_t;
 
 typedef struct {
-	uint8_t servo_chip; /**< chip number for servo */
-	char servo_channel; /**< channel number for servo */
+  uint8_t servo_chip; /**< chip number for servo */
+  char servo_channel; /**< channel number for servo */
 } servo_t;
 
 #endif /* PROJECT_TYPES_H */

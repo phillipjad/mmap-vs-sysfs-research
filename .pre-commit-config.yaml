@@ -1,0 +1,23 @@
+repos:
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+    -   id: check-yaml
+    -   id: end-of-file-fixer
+    -   id: trailing-whitespace
+- repo: https://github.com/scop/pre-commit-shfmt
+  rev: v3.12.0-2
+  hooks:
+    - id: shfmt-src     # build from source (requires/installs Go to build)
+- repo: https://github.com/shellcheck-py/shellcheck-py
+  rev: v0.11.0.1 # Use the latest version listed on the project's PyPI or GitHub page
+  hooks:
+    - id: shellcheck
+- repo: https://github.com/pre-commit/mirrors-clang-format
+  rev: v18.1.3
+  hooks:
+  - id: clang-format
+- repo: https://github.com/codespell-project/codespell
+  rev: v2.4.1
+  hooks:
+  - id: codespell

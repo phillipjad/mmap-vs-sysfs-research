@@ -33,5 +33,4 @@ void servo_lower(void);
  */
 void servo_shutdown(void);
 
-
 #endif /* SERVO_CONTROL_H */
