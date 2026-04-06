@@ -30,8 +30,8 @@
 #define TBCTL_CTRMODE_MASK ((uint16_t)0x0003U)
 #define TBCTL_CTRMODE_UP ((uint16_t)0x0000U)   /* up-count mode */
 #define TBCTL_CTRMODE_STOP ((uint16_t)0x0003U) /* freeze/stop   */
-#define TBCTL_CLKDIV_SHIFT (7U)
-#define TBCTL_HSPCLKDIV_SHIFT (10U)
+#define TBCTL_CLKDIV_SHIFT (10U)
+#define TBCTL_HSPCLKDIV_SHIFT (7U)
 #define TBCTL_FREE_SOFT_FREE ((uint16_t)0xC000U) /* FREE_SOFT [15:14] = 11 (free-run) */
 
 /*
