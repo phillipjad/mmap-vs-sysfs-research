@@ -2,7 +2,7 @@
 #include "mmap_control.h"
 #include "pwm_io_logic.h"
 #include "servo_controller.h"
-#include <stdint.h>
+#include "project_constants.h"
 #include <unistd.h>
 
 #define SERVO_CHIP (2U)
@@ -26,7 +26,7 @@ struct timespec end_time = { 0 };
  *------------------------*/
 static float64_t time_taken(struct timespec *start, struct timespec *end) {
 	time_t seconds = end->tv_sec - start->tv_sec;
-	int64_t nanoseconds = (end->tv_nsec - start->tv_nsec) / (int64_t)SEC_TO_NSEC;
+	int64_t nanoseconds = (end->tv_nsec - start->tv_nsec) / (int64_t)NSEC_PER_USEC;
 	float64_t seconds_as_float = (float64_t)seconds;
 	float64_t nseconds_as_float = (float64_t)nanoseconds;
 	return seconds_as_float + nseconds_as_float;
@@ -80,6 +80,7 @@ int main(void) {
 		epwm_mmap_set_duty_ns(pwm, SERVO_0_NS);
 		(void)clock_gettime(CLOCK_MONOTONIC_RAW, &end_time);
 		degrees_0_latencies[i] = time_taken(&end_time, &start_time);
+		(void)sleep(2U);
 
 		// Test 2
 		LOG("90");
@@ -90,6 +91,7 @@ int main(void) {
 		epwm_mmap_set_duty_ns(pwm, SERVO_180_NS);
 		(void)clock_gettime(CLOCK_MONOTONIC_RAW, &end_time);
 		degrees_180_latencies[i] = time_taken(&end_time, &start_time);
+		(void)sleep(2U);
 	}
 
 	shutdown_pwm(pwm);
