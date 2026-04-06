@@ -16,7 +16,7 @@
 
 // Test results for init and degrees
 static float64_t init_latencies[TEST_SAMPLES];
-static float64_t degrees_0_degrees_latencies[TEST_SAMPLES];
+static float64_t degrees_0_latencies[TEST_SAMPLES];
 static float64_t degrees_180_latencies[TEST_SAMPLES];
 struct timespec start_time = { 0 };
 struct timespec end_time = { 0 };
@@ -58,7 +58,7 @@ int main(void) {
 		(void)clock_gettime(CLOCK_MONOTONIC_RAW, &start_time);
 		epwm_mmap_handle_t *pwm = mmap_pwm_setup();
 		(void)clock_gettime(CLOCK_MONOTONIC_RAW, &end_time);
-		init_latencies[i] = time_taken(&end_time - &start_time);
+		init_latencies[i] = time_taken(&end_time, &start_time);
 		shutdown_pwm(pwm);
 	}
 
@@ -79,7 +79,7 @@ int main(void) {
 		(void)clock_gettime(CLOCK_MONOTONIC_RAW, &start_time);
 		epwm_mmap_set_duty_ns(pwm, SERVO_0_NS);
 		(void)clock_gettime(CLOCK_MONOTONIC_RAW, &end_time);
-		degrees_0_latencies[i] = time_taken(&end_time - &start_time);
+		degrees_0_latencies[i] = time_taken(&end_time, &start_time);
 
 		// Test 2
 		LOG("90");
@@ -89,7 +89,7 @@ int main(void) {
 		(void)clock_gettime(CLOCK_MONOTONIC_RAW, &start_time);
 		epwm_mmap_set_duty_ns(pwm, SERVO_180_NS);
 		(void)clock_gettime(CLOCK_MONOTONIC_RAW, &end_time);
-		degrees_180_latencies[i] = time_taken(&end_time - &start_time);
+		degrees_180_latencies[i] = time_taken(&end_time, &start_time);
 	}
 
 	shutdown_pwm(pwm);
@@ -102,7 +102,7 @@ int main(void) {
 	} else {
 		(void)fprintf(fp, "Iteration, init_ns, 0deg_ns, 180deg_ns\n");
 		for (int i = 0; i < TEST_SAMPLES; ++i) {
-			(void)fprintf(fp, "%u, %.2f, %.2f, %.2f\n", i + 1, init_latencies[i], degrees_0_degrees_latencies[i],
+			(void)fprintf(fp, "%u, %.2f, %.2f, %.2f\n", i + 1, init_latencies[i], degrees_0_latencies[i],
 			    degrees_180_latencies[i]);
 		}
 		(void)fclose(fp);
