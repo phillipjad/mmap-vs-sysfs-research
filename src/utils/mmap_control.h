@@ -3,24 +3,16 @@
 
 #include "project_types.h"
 
-/* mmap Types */
-#define MMAP_IN ("In")
-#define MMAP_OUT ("Out")
-
-void mmap_map_init(void);
+void pwm_mmap_init(uint8_t chip, uint8_t channel);
 
 void mmap_map_close(void);
 
-void mmap_set(uint8_t pin, bool value);
+void mmap_set_pwm_period(uint8_t chip, uint8_t channel, uint32_t period_ns);
 
-uint8_t mmap_read(uint8_t pin);
+void mmap_set_duty_cycle(uint8_t chip, uint8_t channel, uint32_t duty_ns);
 
-void mmap_clear(uint8_t pin);
+void mmap_enable_pwm(uint8_t chip, uint8_t channel, bool enable);
 
-void mmap_set_direction(uint8_t pin, const char *direction);
-
-void mmap_set_direction_out(uint8_t pin);
-
-void mmap_set_direction_in(uint8_t pin);
+void mmap_unexport_pwm_channel(uint8_t chip, uint8_t channel);
 
 #endif /* MMAP_CONTROL_H */

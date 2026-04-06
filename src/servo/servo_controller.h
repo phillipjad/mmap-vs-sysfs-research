@@ -8,9 +8,10 @@
  *
  * @param[in] servo_chip PWM chip
  * @param[in] servo_channel PWM channel
+ * @param[in] use_sysfs flag for implementation type
  * @return void* Returns NULL
  */
-void servo_init(uint8_t servo_chip, char servo_channel);
+void servo_init(uint8_t servo_chip, char servo_channel, bool use_sysfs);
 
 /**
  * @brief Function to raise servo
