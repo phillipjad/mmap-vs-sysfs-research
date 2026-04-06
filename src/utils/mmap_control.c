@@ -1,185 +1,232 @@
 #include "mmap_control.h"
 
 #include <fcntl.h>
-#include <stdint.h>
-#include <string.h>
+#include <stdlib.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
 #include "logger.h"
-#include "project_constants.h"
-#include "project_types.h"
 
-/* PWMSS2 mmap constants */
-#define PAGE_SIZE (4096U)
-/* Base physical address for the PWM Subsystem 2 base address (from TRM memory map) */
-#define EPWM2B_BASE_ADDR (0x48304000)
-/* Offsets for registers within PWM module (from TRM register map) */
-#define PWMSS2_CONFIG_REGISTER_OFF (0x0)
-#define PWMSS2_ECAP2_REGISTER_OFF (0x100)
-#define PWMSS2_EQEP2_REGISTER_OFF (0x180)
-#define PWMSS2_EPWM2_REGISTER_OFF (0x200)
+/* AM335X PWMSS physical base addresses (TRM Table 2-3) */
+#define PWMSS0_BASE_PHYS (0x48300000U)
+#define PWMSS1_BASE_PHYS (0x48302000U)
+#define PWMSS2_BASE_PHYS (0x48304000U)
 
-// Helper to access 32-bit registers by offset
+/* Offsets within PWMSS (from PWMSS_BASE) */
+#define PWMSS_CLKCONFIG_OFF (0x8U)  /* 32-bit CLKCONFIG register */
+#define EPWM_CLK_EN_BIT (4U)        /* bit 4 = EPWM_CLK_EN */
+#define EPWM_MODULE_OFFSET (0x200U) /* ePWM registers at PWMSS_BASE + 0x200 */
+
+/* ePWM 16-bit register offsets (from epwm_regs base) */
+#define EPWM_TBCTL_OFF (0x00U)
+#define EPWM_TBPRD_OFF (0x0AU)
+#define EPWM_CMPA_OFF (0x12U)
+#define EPWM_CMPB_OFF (0x14U)
+#define EPWM_AQCTLA_OFF (0x16U)
+#define EPWM_AQCTLB_OFF (0x18U)
+#define EPWM_AQCSFRC_OFF (0x1CU)
+
+/* TBCTL field masks and values */
+#define TBCTL_CTRMODE_MASK ((uint16_t)0x0003U)
+#define TBCTL_CTRMODE_UP ((uint16_t)0x0000U)   /* up-count mode */
+#define TBCTL_CTRMODE_STOP ((uint16_t)0x0003U) /* freeze/stop   */
+#define TBCTL_CLKDIV_SHIFT (7U)
+#define TBCTL_HSPCLKDIV_SHIFT (10U)
+#define TBCTL_FREE_SOFT_FREE                                                   \
+  ((uint16_t)0xC000U) /* FREE_SOFT [15:14] = 11 (free-run) */
+
+/*
+ * Fixed prescaler: HSPCLKDIV = ÷1 (encoding 0), CLKDIV = ÷32 (encoding 5).
+ *   TBCLK = 100 MHz / (1 × 32) = 3.125 MHz → 320 ns per tick.
+ *   Supports periods up to 65535 × 320 ns ≈ 20.97 ms (covers expected 20 ms
+ * servo period).
+ */
+#define TBCLK_HSPCLKDIV_ENC (0U) /* HSPCLKDIV [12:10] = 000 → ÷1  */
+#define TBCLK_CLKDIV_ENC (5U)    /* CLKDIV    [9:7]   = 101 → ÷32 */
+#define TBCLK_NS_PER_TICK (320U) /* 1 000 000 000 / (100 MHz / 32) */
+
+/* TBCTL value written once during init: stopped, fixed prescaler, free-run */
+#define TBCTL_INIT                                                             \
+  ((uint16_t)(TBCTL_FREE_SOFT_FREE |                                           \
+              (uint16_t)(TBCLK_HSPCLKDIV_ENC << TBCTL_HSPCLKDIV_SHIFT) |       \
+              (uint16_t)(TBCLK_CLKDIV_ENC << TBCTL_CLKDIV_SHIFT) |             \
+              TBCTL_CTRMODE_STOP))
+
+/*
+ * Action-qualifier values for active-high PWM in up-count mode:
+ *   ZRO [1:0] = 10  → set output high at CTR = 0
+ *   CAU [5:4] = 01  → clear output low at CTR = CMPA (counting up) — channel A
+ *   CBU [9:8] = 01  → clear output low at CTR = CMPB (counting up) — channel B
+ */
+#define AQCTLA_UPCOUNT_ACTIVE_HIGH ((uint16_t)0x0012U)
+#define AQCTLB_UPCOUNT_ACTIVE_HIGH ((uint16_t)0x0102U)
+
+/* AQCSFRC continuous software force — CSFA [1:0], CSFB [3:2]; 01 = force low */
+#define AQCSFRC_CSFA_MASK ((uint16_t)0x0003U)
+#define AQCSFRC_CSFB_MASK ((uint16_t)0x000CU)
+#define AQCSFRC_CSFA_LOW ((uint16_t)0x0001U)
+#define AQCSFRC_CSFB_LOW ((uint16_t)0x0004U)
+
+/* mmap page size */
+#define EPWM_PAGE_SIZE (4096U)
+
+/* ePWM handle — definition is internal; callers use the opaque pointer */
+struct epwm_mmap_handle {
+  int fd;
+  volatile uint8_t *map_base;   /* page-aligned mmap result            */
+  volatile uint8_t *pwmss_regs; /* PWMSS_BASE — used for CLKCONFIG     */
+  volatile uint8_t *epwm_regs;  /* PWMSS_BASE + 0x200 — ePWM registers */
+  epwm_channel_t channel;
+  uint32_t period_ns; /* cached for duty-cycle clamping      */
+};
+
+/* 16-bit and 32-bit register accessors */
+static inline volatile uint16_t *reg16(volatile uint8_t *base, uint32_t off) {
+  return (volatile uint16_t *)((uintptr_t)base + off);
+}
+
 static inline volatile uint32_t *reg32(volatile uint8_t *base, uint32_t off) {
-	return (volatile uint32_t *)((uintptr_t)base + off);
-}
-
-/*---------------------------------------------
- * Function: get_mmap_base - helper function
- *---------------------------------------------*/
-static volatile uint8_t *get_mmap_base(uint8_t pin) {
-	uint8_t mmap_base_nubmer = pin / REGISTERS_PER_GROUP;
-	if (mmap_base_nubmer >= mmap_COUNT || mmaps_array[mmap_base_nubmer].mmap_base == NULL ||
-	    mmaps_array[mmap_base_nubmer].fd <= 0) {
-		LOG_AND_EXIT("Failed to get mmap base for pin %d", pin);
-		return NULL;
-	} else {
-		return mmaps_array[mmap_base_nubmer].mmap_base;
-	}
+  return (volatile uint32_t *)((uintptr_t)base + off);
 }
 
 /*--------------------------------------
- * Function: mmap_map_init
+ * Function: epwm_mmap_init
  *--------------------------------------*/
-void mmap_map_init(void) {
-	// Page base
-	uint32_t page_base = 0;
-	// Page offset
-	uint32_t page_off = 0;
-	// Clear out
-	memset(mmaps_array, 0, sizeof(mmaps_array));
+epwm_mmap_handle_t *epwm_mmap_init(uint8_t pwmss_instance,
+                                   epwm_channel_t channel) {
+  if (pwmss_instance > 2U) {
+    LOG_AND_EXIT("Invalid PWMSS instance %u (valid: 0, 1, 2)", pwmss_instance);
+    return NULL;
+  }
 
-	// mmaps
-	const uint32_t addresses[mmap_COUNT] = { mmap0_BASE_PHYS, mmap1_BASE_PHYS, mmap2_BASE_PHYS, mmap3_BASE_PHYS };
+  static const uint32_t base_addrs[3U] = {PWMSS0_BASE_PHYS, PWMSS1_BASE_PHYS,
+                                          PWMSS2_BASE_PHYS};
 
-	// mmap Setup
-	for (int i = 0; i < mmap_COUNT; ++i) {
-		mmaps_array[i].fd = open("/dev/mem", O_RDWR | O_SYNC);
-		if (mmaps_array[i].fd < 0) {
-			LOG_AND_EXIT("Failed to open /dev/mem for mmap PHYSICAL BASE: %d", i);
-		}
+  uint32_t pwmss_base = base_addrs[pwmss_instance];
+  uint32_t page_base = (uint32_t)(pwmss_base & ~(EPWM_PAGE_SIZE - 1U));
+  uint32_t page_off = pwmss_base - page_base;
 
-		page_base = (uint32_t)(addresses[i] & ~(PAGE_SIZE - 1U));
-		page_off = (uint32_t)(addresses[i] - page_base);
+  int fd = open("/dev/mem", O_RDWR | O_SYNC);
+  if (fd < 0) {
+    LOG_AND_EXIT("Failed to open /dev/mem for PWMSS%u", pwmss_instance);
+    return NULL;
+  }
 
-		mmaps_array[i].map_base =
-		    (volatile uint8_t *)mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, mmaps_array[i].fd, page_base);
-		if (mmaps_array[i].map_base == MAP_FAILED) {
-			LOG_AND_EXIT("Failed to create mmap base for mmap PHYSICAL BASE: %d, at physical address: 0x%X", i, addresses[i]);
-		}
+  volatile uint8_t *map_base =
+      (volatile uint8_t *)mmap(NULL, EPWM_PAGE_SIZE, PROT_READ | PROT_WRITE,
+                               MAP_SHARED, fd, (off_t)page_base);
+  if (map_base == MAP_FAILED) {
+    close(fd);
+    LOG_AND_EXIT("Failed to mmap PWMSS%u at 0x%08X", pwmss_instance,
+                 pwmss_base);
+    return NULL;
+  }
 
-		mmaps_array[i].mmap_base = mmaps_array[i].map_base + page_off;
-	}
+  volatile uint8_t *pwmss_regs = map_base + page_off;
+  volatile uint8_t *epwm_regs = pwmss_regs + EPWM_MODULE_OFFSET;
+
+  /* Enable ePWM clock in PWMSS CLKCONFIG (32-bit register, bit 4) */
+  *reg32(pwmss_regs, PWMSS_CLKCONFIG_OFF) |= (1U << EPWM_CLK_EN_BIT);
+
+  epwm_mmap_handle_t *handle = malloc(sizeof(*handle));
+  if (handle == NULL) {
+    munmap((void *)(uintptr_t)map_base, EPWM_PAGE_SIZE);
+    close(fd);
+    LOG_AND_EXIT("malloc failed for epwm_mmap_handle_t");
+    return NULL;
+  }
+
+  handle->fd = fd;
+  handle->map_base = map_base;
+  handle->pwmss_regs = pwmss_regs;
+  handle->epwm_regs = epwm_regs;
+  handle->channel = channel;
+  handle->period_ns = 0U;
+
+  /* Write known TBCTL: stopped, fixed prescaler (÷32), free-run emulation */
+  *reg16(epwm_regs, EPWM_TBCTL_OFF) = TBCTL_INIT;
+
+  /* Configure action-qualifier for the chosen channel */
+  if (channel == EPWM_CHANNEL_A) {
+    *reg16(epwm_regs, EPWM_AQCTLA_OFF) = AQCTLA_UPCOUNT_ACTIVE_HIGH;
+  } else {
+    *reg16(epwm_regs, EPWM_AQCTLB_OFF) = AQCTLB_UPCOUNT_ACTIVE_HIGH;
+  }
+
+  return handle;
 }
 
 /*--------------------------------------
- * Function: mmap_map_close
+ * Function: epwm_mmap_close
  *--------------------------------------*/
-void mmap_map_close(void) {
-	for (int i = 0; i < mmap_COUNT; ++i) {
-		if (mmaps_array[i].map_base && mmaps_array[i].map_base != MAP_FAILED) {
-			munmap((void *)(uintptr_t)mmaps_array[i].map_base, PAGE_SIZE);
-		}
-		if (mmaps_array[i].fd >= 0) {
-			close(mmaps_array[i].fd);
-		}
-	}
+void epwm_mmap_close(epwm_mmap_handle_t *handle) {
+  epwm_mmap_enable(handle, false);
+  munmap((void *)(uintptr_t)handle->map_base, EPWM_PAGE_SIZE);
+  close(handle->fd);
+  free(handle);
 }
 
 /*--------------------------------------
- * Function: mmap_set
+ * Function: epwm_mmap_set_period_ns
  *--------------------------------------*/
-void mmap_set(uint8_t pin, bool value) {
-	// Get Base Address - exits if function fails
-	volatile uint8_t *base = get_mmap_base(pin);
-
-	// Calculate register number under mmap Group
-	uint8_t pin_number = pin % REGISTERS_PER_GROUP;
-
-	// Depending on bool value can put register to 1 using set or 0 using clear
-	// Get registers values
-	volatile uint32_t *register_address = reg32(base, value ? mmap_SETDATAOUT_OFF : mmap_CLEARDATAOUT_OFF);
-	// Set register value to 1
-	*register_address = (1U << pin_number);
+void epwm_mmap_set_period_ns(epwm_mmap_handle_t *handle, uint32_t period_ns) {
+  uint32_t counts = period_ns / TBCLK_NS_PER_TICK;
+  if (counts < 2U || counts > 65536U) {
+    LOG_AND_EXIT("period_ns %u out of range for 320 ns/tick prescaler "
+                 "(valid: 640 ns – 20 971 520 ns)",
+                 period_ns);
+    return;
+  }
+  handle->period_ns = period_ns;
+  *reg16(handle->epwm_regs, EPWM_TBPRD_OFF) = (uint16_t)(counts - 1U);
 }
 
 /*--------------------------------------
- * Function: mmap_read
+ * Function: epwm_mmap_set_duty_ns
  *--------------------------------------*/
-uint8_t mmap_read(uint8_t pin) {
-	// Get Base Address - exits if function fails
-	volatile uint8_t *base = get_mmap_base(pin);
+void epwm_mmap_set_duty_ns(epwm_mmap_handle_t *handle, uint32_t duty_ns) {
+  if (handle->period_ns == 0U) {
+    LOG_AND_EXIT(
+        "epwm_mmap_set_period_ns must be called before epwm_mmap_set_duty_ns");
+    return;
+  }
+  uint32_t clamped =
+      (duty_ns > handle->period_ns) ? handle->period_ns : duty_ns;
+  uint16_t cmp = (uint16_t)(clamped / TBCLK_NS_PER_TICK);
 
-	// Calculate register number under mmap Group
-	uint8_t pin_number = pin % REGISTERS_PER_GROUP;
-
-	// Get registers values
-	volatile uint32_t *register_address = reg32(base, mmap_DATAIN_OFFSET);
-	// Read if register valjue is populated after bitmask, if so then return true
-	return (*register_address & (1U << pin_number)) ? 1U : 0U;
+  if (handle->channel == EPWM_CHANNEL_A) {
+    *reg16(handle->epwm_regs, EPWM_CMPA_OFF) = cmp;
+  } else {
+    *reg16(handle->epwm_regs, EPWM_CMPB_OFF) = cmp;
+  }
 }
 
 /*--------------------------------------
- * Function: mmap_clear
+ * Function: epwm_mmap_enable
  *--------------------------------------*/
-void mmap_clear(uint8_t pin) {
-	// Get Base Address - exits if function fails
-	volatile uint8_t *base = get_mmap_base(pin);
+void epwm_mmap_enable(epwm_mmap_handle_t *handle, bool enable) {
+  uint16_t aqcsfrc = *reg16(handle->epwm_regs, EPWM_AQCSFRC_OFF);
+  uint16_t tbctl = *reg16(handle->epwm_regs, EPWM_TBCTL_OFF);
 
-	// Calculate register number under mmap Group
-	uint8_t pin_number = pin % REGISTERS_PER_GROUP;
+  if (enable) {
+    /* Remove software force for this channel and start the counter */
+    if (handle->channel == EPWM_CHANNEL_A) {
+      aqcsfrc = (uint16_t)(aqcsfrc & ~AQCSFRC_CSFA_MASK);
+    } else {
+      aqcsfrc = (uint16_t)(aqcsfrc & ~AQCSFRC_CSFB_MASK);
+    }
+    *reg16(handle->epwm_regs, EPWM_AQCSFRC_OFF) = aqcsfrc;
+    tbctl = (uint16_t)((tbctl & ~TBCTL_CTRMODE_MASK) | TBCTL_CTRMODE_UP);
+  } else {
+    /* Force output continuously low, then freeze the counter */
+    if (handle->channel == EPWM_CHANNEL_A) {
+      aqcsfrc = (uint16_t)((aqcsfrc & ~AQCSFRC_CSFA_MASK) | AQCSFRC_CSFA_LOW);
+    } else {
+      aqcsfrc = (uint16_t)((aqcsfrc & ~AQCSFRC_CSFB_MASK) | AQCSFRC_CSFB_LOW);
+    }
+    *reg16(handle->epwm_regs, EPWM_AQCSFRC_OFF) = aqcsfrc;
+    tbctl = (uint16_t)((tbctl & ~TBCTL_CTRMODE_MASK) | TBCTL_CTRMODE_STOP);
+  }
 
-	// Get registers values and use clear offset
-	volatile uint32_t *register_address = reg32(base, mmap_CLEARDATAOUT_OFF);
-	// Set register value to 1 to clear
-	*register_address = (1U << pin_number);
-}
-
-/*--------------------------------------
- * Function: mmap_set_direction
- *--------------------------------------*/
-void mmap_set_direction(uint8_t pin, const char *direction) {
-	// Set mmap direction based on direction char
-	if (strcmp(direction, mmap_IN) == 0) {
-		// Set mmap to be input
-		mmap_set_direction_in(pin);
-	} else {
-		// Set mmap to be output
-		mmap_set_direction_out(pin);
-	}
-}
-
-/*--------------------------------------
- * Function: mmap_set_direction_out
- *--------------------------------------*/
-void mmap_set_direction_out(uint8_t pin) {
-	// Get Base Address - exits if function fails
-	volatile uint8_t *base = get_mmap_base(pin);
-
-	// Calculate register number under mmap Group
-	uint8_t pin_number = pin % REGISTERS_PER_GROUP;
-
-	// Get register values
-	volatile uint32_t *register_address = reg32(base, MMAP_OE_OFFSET);
-
-	// Set register to value 0 to set as output pin
-	*register_address &= ~(1U << pin_number);
-}
-
-/*--------------------------------------
- * Function: mmap_set_direction_in
- *--------------------------------------*/
-void mmap_set_direction_in(uint8_t pin) {
-	// Get Base Address - exits if function fails
-	volatile uint8_t *base = get_mmap_base(pin);
-
-	// Calculate register number under mmap Group
-	uint8_t pin_number = pin % REGISTERS_PER_GROUP;
-
-	// Get register values
-	volatile uint32_t *register_address = reg32(base, mmap_OE_OFFSET);
-
-	// Set register to value 1 to set as output pin
-	*register_address |= (1U << pin_number);
+  *reg16(handle->epwm_regs, EPWM_TBCTL_OFF) = tbctl;
 }

@@ -15,6 +15,7 @@ add_executable(app
     src/main.c
     src/servo/servo_controller.c
     src/utils/logger.c
+    src/utils/mmap_control.c
     src/utils/pwm_io_logic.c
 )
 
