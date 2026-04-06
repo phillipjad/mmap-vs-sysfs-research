@@ -118,13 +118,11 @@ static void servo_init_hw(uint8_t servo_chip, char servo_channel,
     // Export the PWM channel
     pwm_mmap_init(extracted_chip_value, extracted_channel_value);
     // Set period
-    mmap_set_pwm_period(extracted_chip_value, extracted_channel_value,
-                        SERVO_PWM_NS);
+    mmap_set_pwm_period(SERVO_PWM_NS);
     // Set duty cycle
-    mmap_set_duty_cycle(extracted_chip_value, extracted_channel_value,
-                        GATE_RAISE);
+    mmap_set_duty_cycle(GATE_RAISE);
     // Enable output
-    mmap_enable_pwm(extracted_chip_value, extracted_channel_value, true);
+    mmap_enable_pwm(true);
     LOG("MMAP init complete");
   }
 }
@@ -155,8 +153,7 @@ void servo_raise(void) {
     set_pwm_duty_cycle(extracted_chip_value, extracted_channel_value,
                        GATE_RAISE);
   } else {
-    mmap_set_duty_cycle(extracted_chip_value, extracted_channel_value,
-                        GATE_RAISE);
+    mmap_set_duty_cycle(GATE_RAISE);
   }
 #else
   LOG("Raising gate");
@@ -173,8 +170,7 @@ void servo_lower(void) {
     set_pwm_duty_cycle(extracted_chip_value, extracted_channel_value,
                        GATE_LOWER);
   } else {
-    mmap_set_duty_cycle(extracted_chip_value, extracted_channel_value,
-                        GATE_LOWER);
+    mmap_set_duty_cycle(GATE_LOWER);
   }
 #else
   LOG("Lowering gate");
@@ -192,8 +188,7 @@ void servo_shutdown(void) {
     set_pwm_duty_cycle(extracted_chip_value, extracted_channel_value,
                        GATE_RAISE);
   } else {
-    mmap_set_duty_cycle(extracted_chip_value, extracted_channel_value,
-                        GATE_RAISE);
+    mmap_set_duty_cycle(GATE_RAISE);
   }
   struct timespec timer = {0};
   timer.tv_sec = 0;
@@ -204,8 +199,8 @@ void servo_shutdown(void) {
     enable_pwm(extracted_chip_value, extracted_channel_value, false);
     unexport_pwm_channel(extracted_chip_value, extracted_channel_value);
   } else {
-    mmap_enable_pwm(extracted_chip_value, extracted_channel_value, false);
-    mmap_unexport_pwm_channel(extracted_chip_value, extracted_channel_value);
+    mmap_enable_pwm(false);
+    mmap_unexport_pwm_channel();
   }
 #endif /* NDEBUG */
 }

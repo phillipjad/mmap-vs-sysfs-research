@@ -16,9 +16,14 @@ add_executable(app
     src/servo/servo_controller.c
     src/utils/logger.c
     src/utils/pwm_io_logic.c
+    src/utils/mmap_control.c
 )
 
 target_include_directories(app PRIVATE
     src/servo
     src/utils
 )
+
+target_link_options(app PRIVATE -static)
+target_link_libraries(app PRIVATE m)
+

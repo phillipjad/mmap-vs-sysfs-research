@@ -1,3 +1,4 @@
+#include <unistd.h>
 #include "servo_controller.h"
 
 #define SERVO_CHIP (2U)

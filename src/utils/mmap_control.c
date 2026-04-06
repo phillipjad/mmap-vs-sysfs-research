@@ -156,19 +156,19 @@ void mmap_map_close(void) {
   }
 }
 
-void mmap_set_pwm_period(uint8_t chip, uint8_t channel, uint32_t period_ns) {
+void mmap_set_pwm_period(uint32_t period_ns) {
   if (epwm2_period != NULL) {
     *epwm2_period = (uint16_t)(period_ns / NS_PER_TICK); // 2.4MHz
   }
 }
 
-void mmap_set_duty_cycle(uint8_t chip, uint8_t channel, uint32_t duty_ns) {
+void mmap_set_duty_cycle(uint32_t duty_ns) {
   if (epwm2_duty_cycle != NULL) {
     *epwm2_duty_cycle = (uint16_t)(duty_ns / NS_PER_TICK); // 2.4MHz
   }
 }
 
-void mmap_enable_pwm(uint8_t chip, uint8_t channel, bool enable) {
+void mmap_enable_pwm(bool enable) {
   if (epwm2_aqctlb != NULL && epwm2_tbctl != NULL) {
     if (enable) {
       *epwm2_aqctlb = 0x0201; // set duty cycle 0x02 and clear ZRO field 0x01
@@ -180,8 +180,8 @@ void mmap_enable_pwm(uint8_t chip, uint8_t channel, bool enable) {
   }
 }
 
-void mmap_unexport_pwm_channel(uint8_t chip, uint8_t channel) {
-  mmap_enable_pwm(chip, channel, false);
+void mmap_unexport_pwm_channel(void) {
+  mmap_enable_pwm(false);
   epwm2_period = NULL;
   epwm2_duty_cycle = NULL;
   epwm2_aqctlb = NULL;
