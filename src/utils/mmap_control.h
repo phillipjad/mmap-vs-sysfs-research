@@ -25,8 +25,7 @@ typedef enum { EPWM_CHANNEL_A, EPWM_CHANNEL_B } epwm_channel_t;
  * @param[in] channel         EPWM_CHANNEL_A or EPWM_CHANNEL_B.
  * @return Allocated handle — must be released with epwm_mmap_close().
  */
-epwm_mmap_handle_t *epwm_mmap_init(uint8_t pwmss_instance,
-                                   epwm_channel_t channel);
+epwm_mmap_handle_t *epwm_mmap_init(uint8_t pwmss_instance, epwm_channel_t channel);
 
 /**
  * @brief Disable the PWM output, unmap registers, close /dev/mem, and free
