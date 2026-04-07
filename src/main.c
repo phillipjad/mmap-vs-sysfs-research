@@ -7,10 +7,10 @@
 
 #define SERVO_CHIP (2U)
 #define SERVO_CHANNEL ('b')
-#define SERVO_0_NS (500000U)      /* 1.0 ms — 0 deg position */
+#define SERVO_0_NS (500000U)       /* 1.0 ms — 0 deg position */
 #define SERVO_CENTER_NS (1500000U) /* 1.5 ms — center position */
 #define SERVO_180_NS (2500000U)    /* 2.0 ms — 180 deg position */
-#define TEST_SAMPLES (5)
+#define TEST_SAMPLES (100)
 #define NSEC_PER_SEC (1000000000)
 
 // Test results for init and degrees
@@ -78,12 +78,10 @@ int main(void) {
 	char filename[128] = { 0 };
 #ifdef USE_MMAP
 	(void)mkdir("outputs/mmap", 0755);
-	(void)strftime(filename, sizeof(filename),
-		"outputs/mmap/mmap_latencies_%Y-%m-%d:%H:%M:%S.csv", tm_info);
+	(void)strftime(filename, sizeof(filename), "outputs/mmap/mmap_latencies_%Y-%m-%d:%H:%M:%S.csv", tm_info);
 #else
 	(void)mkdir("outputs/sysfs", 0755);
-	(void)strftime(filename, sizeof(filename),
-		"outputs/sysfs/sysfs_latencies_%Y-%m-%d:%H:%M:%S.csv", tm_info);
+	(void)strftime(filename, sizeof(filename), "outputs/sysfs/sysfs_latencies_%Y-%m-%d:%H:%M:%S.csv", tm_info);
 #endif
 	FILE *fp = fopen(filename, "w");
 	if (fp == NULL) {
