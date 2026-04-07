@@ -13,18 +13,11 @@
 void servo_init(uint8_t servo_chip, char servo_channel);
 
 /**
- * @brief Function to raise servo
+ * @brief Set servo duty cycle in nanoseconds
  *
- * @return void* Returns NULL
+ * @param[in] duty_ns Pulse width in nanoseconds
  */
-void servo_raise(void);
-
-/**
- * @brief Function to lower servo
- *
- * @return void* Returns NULL
- */
-void servo_lower(void);
+void servo_set_duty_ns(uint32_t duty_ns);
 
 /**
  * @brief Function to shutdown servo

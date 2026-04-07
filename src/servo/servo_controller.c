@@ -1,29 +1,20 @@
 #include "servo_controller.h"
 
-#include <pthread.h>
-#ifdef NDEBUG /* We only need PWM control in release */
-#include "pwm_io_logic.h"
-#endif /* NDEBUG */
 #include "logger.h"
 #include "project_constants.h"
 #include "project_types.h"
+#include <pthread.h>
 
-/* Servo Angles */
-#define SERVO_RIGHT (2000000U)
-#define SERVO_CENTER (1500000U)
-#define SERVO_LEFT (1000000U)
-
-/* Servo Constants */
-#define SERVO_PWM_NS (20000000U)
-#define GATE_RAISE (SERVO_RIGHT)
-#define GATE_LOWER (SERVO_CENTER)
-
-#ifdef NDEBUG
-static uint8_t extracted_chip_value = 0;
-static uint8_t extracted_channel_value = 0;
+#ifdef USE_MMAP
+#include "mmap_control.h"
+#include "pwm_io_logic.h" /* sysfs needed for PM lifecycle even in mmap mode */
+#endif
+#ifdef USE_SYSFS
+#include "pwm_io_logic.h"
+#endif
 
 /**
- * @brief This function ensures that the pin is muxxed for pwm to prevent having
+ * @brief This function ensures that the pin is muxed for pwm to prevent having
  * to manually run config-pin on the BBB
  *
  * @param[in] servo_chip The servo chip passed in by user input/config
@@ -72,95 +63,139 @@ static void configure_pwm_pinmux(uint8_t servo_chip, char servo_channel) {
 	(void)fclose(pinmux_file);
 }
 
-static void servo_init_hw(uint8_t servo_chip, char servo_channel) {
-	// Store mapped values
-	// Store chip value
-	if (servo_chip == 1) {
-		extracted_chip_value = (uint8_t)4; /* EHRPWM1 maps to pwmchip4 */
-	} else if (servo_chip == 2) {
-		extracted_chip_value = (uint8_t)7; /* EHRPWM2 maps to pwmchip7 */
-	} else {
-		LOG_AND_EXIT("ERROR: Invalid EHRPWM chip value given in hardware init.");
-		return;
-	}
-	// Get mapped channel uint8_t value
-	if ((servo_channel == 'a') || (servo_channel == 'A')) {
-		extracted_channel_value = (uint8_t)0;
-	} else if ((servo_channel == 'b') || (servo_channel == 'B')) {
-		extracted_channel_value = (uint8_t)1;
-	} else {
-		LOG_AND_EXIT("ERROR: Invalid EHRPWM channel value given in hardware init.");
-		return;
-	}
-	// Configure pin mux before accessing PWM sysfs
-	configure_pwm_pinmux(servo_chip, servo_channel);
-	// Export the PWM channel
-	init_pwm_channel(extracted_chip_value, extracted_channel_value);
-	// Set period
-	set_pwm_period(extracted_chip_value, extracted_channel_value, SERVO_PWM_NS);
-	// Set duty cycle
-	set_pwm_duty_cycle(extracted_chip_value, extracted_channel_value, GATE_RAISE);
-	// Enable output
-	enable_pwm(extracted_chip_value, extracted_channel_value, true);
-}
-#else
-static void servo_init_sw() {
-	LOG("Servo initialized");
-}
-#endif /* NDEBUG */
+/* Servo Constants */
+#define SERVO_PERIOD_NS (20000000U) /* 50 Hz */
+#define SERVO_CENTER_NS (1500000U)  /* 1.5 ms — center position */
 
-/*--------------------------------------
- * Function: servo_init
- *--------------------------------------*/
+/* ============================================================================
+ * USE_MMAP IMPLEMENTATION
+ * Hybrid approach: sysfs keeps the PWMSS module clock alive (PM reference),
+ * mmap provides direct register access for low-latency duty-cycle writes.
+ * ============================================================================ */
+#ifdef USE_MMAP
+
+static epwm_mmap_handle_t *g_mmap_handle = NULL;
+static uint8_t g_pwmchip = 0U;
+static uint8_t g_sysfs_channel = 0U;
+
 void servo_init(uint8_t servo_chip, char servo_channel) {
-#ifdef NDEBUG
-	servo_init_hw(servo_chip, servo_channel);
-#else
-	(void)servo_chip;
-	(void)servo_channel;
-	servo_init_sw();
-#endif /* NDEBUG */
+	configure_pwm_pinmux(servo_chip, servo_channel);
+
+	/* --- sysfs init (acquires PM reference, enables PWMSS clocks) --- */
+	if (servo_chip == 1) {
+		g_pwmchip = 4U; /* EHRPWM1 → pwmchip4 */
+	} else if (servo_chip == 2) {
+		g_pwmchip = 7U; /* EHRPWM2 → pwmchip7 */
+	} else {
+		LOG_AND_EXIT("ERROR: Invalid servo chip %u (valid: 1, 2)", servo_chip);
+		return;
+	}
+
+	if ((servo_channel == 'a') || (servo_channel == 'A')) {
+		g_sysfs_channel = 0U;
+	} else if ((servo_channel == 'b') || (servo_channel == 'B')) {
+		g_sysfs_channel = 1U;
+	} else {
+		LOG_AND_EXIT("ERROR: Invalid servo channel %c (valid: a, A, b, B)", servo_channel);
+		return;
+	}
+
+	init_pwm_channel(g_pwmchip, g_sysfs_channel);
+	set_pwm_period(g_pwmchip, g_sysfs_channel, SERVO_PERIOD_NS);
+	set_pwm_duty_cycle(g_pwmchip, g_sysfs_channel, SERVO_CENTER_NS);
+	enable_pwm(g_pwmchip, g_sysfs_channel, true);
+	LOG("Sysfs PWM exported (PM reference acquired)");
+
+	/* --- mmap init (now safe — PWMSS clocks are enabled) --- */
+	uint8_t pwmss_instance;
+	if (servo_chip == 1) {
+		pwmss_instance = 1U;
+	} else {
+		pwmss_instance = 2U;
+	}
+
+	epwm_channel_t channel;
+	if ((servo_channel == 'a') || (servo_channel == 'A')) {
+		channel = EPWM_CHANNEL_A;
+	} else {
+		channel = EPWM_CHANNEL_B;
+	}
+
+	g_mmap_handle = epwm_mmap_init(pwmss_instance, channel);
+	epwm_mmap_set_period_ns(g_mmap_handle, SERVO_PERIOD_NS);
+	epwm_mmap_set_duty_ns(g_mmap_handle, SERVO_CENTER_NS);
+	epwm_mmap_enable(g_mmap_handle, true);
+	LOG("Servo initialized (mmap mode, sysfs PM)");
 }
 
-/*--------------------------------------
- * Function: servo_raise
- *--------------------------------------*/
-void servo_raise(void) {
-#ifdef NDEBUG
-	// Set duty cycle
-	set_pwm_duty_cycle(extracted_chip_value, extracted_channel_value, GATE_RAISE);
-#else
-	LOG("Raising gate");
-#endif /* NDEBUG */
+void servo_set_duty_ns(uint32_t duty_ns) {
+	if (g_mmap_handle != NULL) {
+		epwm_mmap_set_duty_ns(g_mmap_handle, duty_ns);
+	}
 }
 
-/*--------------------------------------
- * Function: servo_lower
- *--------------------------------------*/
-void servo_lower(void) {
-#ifdef NDEBUG
-	// Set duty cycle
-	set_pwm_duty_cycle(extracted_chip_value, extracted_channel_value, GATE_LOWER);
-#else
-	LOG("Lowering gate");
-#endif /* NDEBUG */
-}
-
-/*--------------------------------------
- * Function: servo_shutdown
- *--------------------------------------*/
 void servo_shutdown(void) {
-	LOG("Shutting down gate");
-#ifdef NDEBUG
-	// Set duty cycle
-	set_pwm_duty_cycle(extracted_chip_value, extracted_channel_value, GATE_RAISE);
-	struct timespec timer = { 0 };
-	timer.tv_sec = 0;
-	timer.tv_nsec = SEC_TO_NSEC / 2;
-	nanosleep(&timer, NULL);
-	// Disable output
-	enable_pwm(extracted_chip_value, extracted_channel_value, false);
-	// Unexport
-	unexport_pwm_channel(extracted_chip_value, extracted_channel_value);
-#endif /* NDEBUG */
+	LOG("Shutting down servo");
+	/* Close mmap first */
+	if (g_mmap_handle != NULL) {
+		epwm_mmap_close(g_mmap_handle);
+		g_mmap_handle = NULL;
+	}
+	/* Release sysfs PM reference last */
+	enable_pwm(g_pwmchip, g_sysfs_channel, false);
+	unexport_pwm_channel(g_pwmchip, g_sysfs_channel);
 }
+
+#endif /* USE_MMAP */
+
+/* ============================================================================
+ * USE_SYSFS IMPLEMENTATION
+ * ============================================================================ */
+#ifdef USE_SYSFS
+
+static uint8_t g_pwmchip = 0U;
+static uint8_t g_channel = 0U;
+
+void servo_init(uint8_t servo_chip, char servo_channel) {
+	/* Configure pinmux to allow PWM access */
+	configure_pwm_pinmux(servo_chip, servo_channel);
+
+	/* Map chip number to sysfs pwmchip */
+	if (servo_chip == 1) {
+		g_pwmchip = 4U; /* EHRPWM1 maps to pwmchip4 */
+	} else if (servo_chip == 2) {
+		g_pwmchip = 7U; /* EHRPWM2 maps to pwmchip7 */
+	} else {
+		LOG_AND_EXIT("ERROR: Invalid servo chip %u (valid: 1, 2)", servo_chip);
+		return;
+	}
+
+	/* Map channel letter to sysfs channel index */
+	if ((servo_channel == 'a') || (servo_channel == 'A')) {
+		g_channel = 0U;
+	} else if ((servo_channel == 'b') || (servo_channel == 'B')) {
+		g_channel = 1U;
+	} else {
+		LOG_AND_EXIT("ERROR: Invalid servo channel %c (valid: a, A, b, B)", servo_channel);
+		return;
+	}
+
+	/* Initialize sysfs PWM */
+	init_pwm_channel(g_pwmchip, g_channel);
+	set_pwm_period(g_pwmchip, g_channel, SERVO_PERIOD_NS);
+	set_pwm_duty_cycle(g_pwmchip, g_channel, SERVO_CENTER_NS);
+	enable_pwm(g_pwmchip, g_channel, true);
+	LOG("Servo initialized (sysfs mode)");
+}
+
+void servo_set_duty_ns(uint32_t duty_ns) {
+	set_pwm_duty_cycle(g_pwmchip, g_channel, duty_ns);
+}
+
+void servo_shutdown(void) {
+	LOG("Shutting down servo");
+	enable_pwm(g_pwmchip, g_channel, false);
+	unexport_pwm_channel(g_pwmchip, g_channel);
+}
+
+#endif /* USE_SYSFS */
