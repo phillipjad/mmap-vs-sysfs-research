@@ -3,6 +3,7 @@
 #include "project_types.h"
 #include "servo_controller.h"
 #include <stdint.h>
+#include <sys/stat.h>
 
 #define SERVO_CHIP (2U)
 #define SERVO_CHANNEL ('b')
@@ -70,7 +71,20 @@ int main(void) {
 	servo_shutdown();
 
 	// Export latencies to file
-	const char *filename = "mmap_latencies.csv";
+	(void)mkdir("outputs", 0755);
+	struct timespec wall_time = { 0 };
+	(void)clock_gettime(CLOCK_REALTIME, &wall_time);
+	struct tm *tm_info = localtime(&wall_time.tv_sec);
+	char filename[128] = { 0 };
+#ifdef USE_MMAP
+	(void)mkdir("outputs/mmap", 0755);
+	(void)strftime(filename, sizeof(filename),
+		"outputs/mmap/mmap_latencies_%Y-%m-%d:%H:%M:%S.csv", tm_info);
+#else
+	(void)mkdir("outputs/sysfs", 0755);
+	(void)strftime(filename, sizeof(filename),
+		"outputs/sysfs/sysfs_latencies_%Y-%m-%d:%H:%M:%S.csv", tm_info);
+#endif
 	FILE *fp = fopen(filename, "w");
 	if (fp == NULL) {
 		LOG_AND_EXIT("Failed to create latencies export file");
