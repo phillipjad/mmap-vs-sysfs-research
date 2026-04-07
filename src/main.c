@@ -26,10 +26,9 @@ struct timespec end_time = { 0 };
  *------------------------*/
 static float64_t time_taken(struct timespec *start, struct timespec *end) {
 	time_t seconds = end->tv_sec - start->tv_sec;
-	int64_t nanoseconds = (end->tv_nsec - start->tv_nsec) / (int64_t)NSEC_PER_USEC;
+	float64_t nanoseconds = (float64_t)(end->tv_nsec - start->tv_nsec);
 	float64_t seconds_as_float = (float64_t)seconds;
-	float64_t nseconds_as_float = (float64_t)nanoseconds;
-	return seconds_as_float + nseconds_as_float;
+	return (seconds_as_float *1e9) + nanoseconds;
 }
 
 static epwm_mmap_handle_t *mmap_pwm_setup(void) {
