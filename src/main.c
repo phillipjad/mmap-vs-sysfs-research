@@ -57,7 +57,7 @@ int main(void) {
 		(void)clock_gettime(CLOCK_MONOTONIC_RAW, &start_time);
 		epwm_mmap_handle_t *pwm = mmap_pwm_setup();
 		(void)clock_gettime(CLOCK_MONOTONIC_RAW, &end_time);
-		init_latencies[i] = time_taken(&end_time, &start_time);
+		init_latencies[i] = time_taken(&start_time, &end_time);
 		shutdown_pwm(pwm);
 	}
 
@@ -78,7 +78,7 @@ int main(void) {
 		(void)clock_gettime(CLOCK_MONOTONIC_RAW, &start_time);
 		epwm_mmap_set_duty_ns(pwm, SERVO_0_NS);
 		(void)clock_gettime(CLOCK_MONOTONIC_RAW, &end_time);
-		degrees_0_latencies[i] = time_taken(&end_time, &start_time);
+		degrees_0_latencies[i] = time_taken(&start_time, &end_time);
 		(void)sleep(2U);
 
 		// Test 2
@@ -89,7 +89,7 @@ int main(void) {
 		(void)clock_gettime(CLOCK_MONOTONIC_RAW, &start_time);
 		epwm_mmap_set_duty_ns(pwm, SERVO_180_NS);
 		(void)clock_gettime(CLOCK_MONOTONIC_RAW, &end_time);
-		degrees_180_latencies[i] = time_taken(&end_time, &start_time);
+		degrees_180_latencies[i] = time_taken(&start_time, &end_time);
 		(void)sleep(2U);
 	}
 
