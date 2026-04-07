@@ -1,0 +1,3 @@
+group,measurement,mean_ns,std_ns,cv,ci_lo,ci_hi,n_raw,n_filtered,n_removed
+mmap,0,3857.2167,558.2735,14.4735,1.1510,1.0497,300,300,0
+mmap,180,3625.3133,531.2152,14.6529,1.2144,1.1395,300,300,0

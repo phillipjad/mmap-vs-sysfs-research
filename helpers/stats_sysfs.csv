@@ -1,0 +1,3 @@
+group,measurement,mean_ns,std_ns,cv,ci_lo,ci_hi,n_raw,n_filtered,n_removed
+sysfs,0,292948.6389,18036.3680,6.1568,0.6519,0.5649,300,288,12
+sysfs,180,297408.9799,23800.7475,8.0027,0.7782,0.6662,300,298,2
