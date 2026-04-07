@@ -37,6 +37,14 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Per https://sourceware.org/glibc/manual/2.43/html_mono/libc.html#index-_005fPOSIX_005fC_005fSOURCE
 add_definitions(-D_POSIX_C_SOURCE=202405L)
 
+if(USE_SYSFS)
+    message(STATUS "Compiling for Sysfs-based PWM control")
+    add_compile_definitions(USE_SYSFS)
+elseif(USE_MMAP)
+    message(STATUS "Compiling for MMAP-based PWM control")
+    add_compile_definitions(USE_MMAP)
+endif()
+
 link_libraries("-static")
 
 add_executable(app
